@@ -2,21 +2,21 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
-import 'dart:io' show Platform;
 
 class AuthProvider with ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
 
   User? _user;
   bool _isLoading = false;
   String? _errorMessage;
+  bool _isGoogleSignInInitialized = false;
 
   AuthProvider() {
     _auth.authStateChanges().listen((User? user) {
       _user = user;
       notifyListeners();
     });
+    _initializeGoogleSignIn();
   }
 
   User? get user => _user;
@@ -32,6 +32,17 @@ class AuthProvider with ChangeNotifier {
   void _setError(String? error) {
     _errorMessage = error;
     notifyListeners();
+  }
+
+  // Initialize Google Sign In
+  Future<void> _initializeGoogleSignIn() async {
+    try {
+      await GoogleSignIn.instance.initialize();
+      _isGoogleSignInInitialized = true;
+    } catch (e) {
+      debugPrint('Google Sign-In initialization error: $e');
+      _isGoogleSignInInitialized = false;
+    }
   }
 
   // Email/Password Sign Up
@@ -74,29 +85,64 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  // Google Sign In
+  // Google Sign In (Updated for google_sign_in 7.2.0+)
   Future<bool> signInWithGoogle() async {
     try {
       _setLoading(true);
       _setError(null);
 
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-
-      if (googleUser == null) {
-        _setLoading(false);
-        return false;
+      // Ensure Google Sign-In is initialized
+      if (!_isGoogleSignInInitialized) {
+        await _initializeGoogleSignIn();
       }
 
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
+      if (!_isGoogleSignInInitialized) {
+        throw Exception('Google Sign-In could not be initialized');
+      }
 
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
+      // Check if platform supports authenticate
+      if (GoogleSignIn.instance.supportsAuthenticate()) {
+        // Use authenticate for supported platforms
+        await GoogleSignIn.instance.authenticate(scopeHint: ['email']);
 
-      await _auth.signInWithCredential(credential);
-      return true;
+        // Listen for authentication events
+        final completer = Completer<GoogleSignInAccount?>();
+        final subscription = GoogleSignIn.instance.authenticationEvents.listen(
+          (event) {
+            if (event is GoogleSignInAuthenticationEventSignIn) {
+              completer.complete(event.user);
+            } else if (event is GoogleSignInAuthenticationEventSignOut) {
+              completer.complete(null);
+            }
+          },
+        );
+
+        final googleUser = await completer.future.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => null,
+        );
+
+        subscription.cancel();
+
+        if (googleUser == null) {
+          _setLoading(false);
+          return false;
+        }
+
+        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+
+        await _auth.signInWithCredential(credential);
+        return true;
+      } else {
+        // Web or unsupported platform
+        _setError('Google Sign-In not supported on this platform. Please use the web interface.');
+        return false;
+      }
     } catch (e) {
       _setError('Google sign-in failed: ${e.toString()}');
       return false;
@@ -152,7 +198,14 @@ class AuthProvider with ChangeNotifier {
   // Sign Out
   Future<void> signOut() async {
     try {
-      await _googleSignIn.signOut();
+      // Sign out from Google if initialized
+      if (_isGoogleSignInInitialized) {
+        try {
+          await GoogleSignIn.instance.signOut();
+        } catch (e) {
+          debugPrint('Google Sign-Out error: $e');
+        }
+      }
       await _auth.signOut();
     } catch (e) {
       _setError('Sign out failed: ${e.toString()}');

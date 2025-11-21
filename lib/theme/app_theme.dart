@@ -67,7 +67,7 @@ class AppTheme {
 
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: bloodRed.withValues(alpha:0.8),
+          backgroundColor: bloodRed.withOpacity(0.8),
           foregroundColor: textLight,
           padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 18),
           shape: const RoundedRectangleBorder(
@@ -84,7 +84,7 @@ class AppTheme {
 
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.black.withValues(alpha:0.6),
+        fillColor: Colors.black.withOpacity(0.6),
         border: const OutlineInputBorder(
           borderRadius: BorderRadius.zero,
           borderSide: BorderSide(color: borderRed),
@@ -95,7 +95,7 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.zero,
-          borderSide: BorderSide(color: bloodLight.withValues(alpha:0.6)),
+          borderSide: BorderSide(color: bloodLight.withOpacity(0.6)),
         ),
         labelStyle: const TextStyle(
           color: Color(0xFF888888),
@@ -103,12 +103,12 @@ class AppTheme {
           letterSpacing: 2,
         ),
         hintStyle: TextStyle(
-          color: textDim.withValues(alpha:0.5),
+          color: textDim.withOpacity(0.5),
         ),
       ),
 
-      cardTheme: CardTheme(
-        color: panelDark.withValues(alpha:0.95),
+      cardTheme: CardThemeData(
+        color: panelDark.withOpacity(0.95),
         elevation: 20,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.zero,
