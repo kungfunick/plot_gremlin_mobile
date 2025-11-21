@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -9,21 +10,21 @@ class AuthProvider with ChangeNotifier {
   User? _user;
   bool _isLoading = false;
   String? _errorMessage;
-  bool _isGoogleSignInInitialized = false;
 
   AuthProvider() {
-    _auth.authStateChanges().listen((User? user) {
+    _auth.authStateChanges().listen((user) {
       _user = user;
       notifyListeners();
     });
-    _initializeGoogleSignIn();
   }
 
+  // Getters
   User? get user => _user;
+  bool get isAuthenticated => _user != null;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
-  bool get isAuthenticated => _user != null;
 
+  // Internal state management
   void _setLoading(bool loading) {
     _isLoading = loading;
     notifyListeners();
@@ -34,28 +35,17 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // Initialize Google Sign In
-  Future<void> _initializeGoogleSignIn() async {
-    try {
-      await GoogleSignIn.instance.initialize();
-      _isGoogleSignInInitialized = true;
-    } catch (e) {
-      debugPrint('Google Sign-In initialization error: $e');
-      _isGoogleSignInInitialized = false;
-    }
-  }
+  void clearError() => _setError(null);
 
-  // Email/Password Sign Up
+  // -------------------------
+  // Email / Password Methods
+  // -------------------------
+
   Future<bool> signUpWithEmail(String email, String password) async {
     try {
       _setLoading(true);
       _setError(null);
-
-      await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-
+      await _auth.createUserWithEmailAndPassword(email: email, password: password);
       return true;
     } on FirebaseAuthException catch (e) {
       _setError(_getErrorMessage(e));
@@ -65,17 +55,11 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  // Email/Password Sign In
   Future<bool> signInWithEmail(String email, String password) async {
     try {
       _setLoading(true);
       _setError(null);
-
-      await _auth.signInWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-
+      await _auth.signInWithEmailAndPassword(email: email, password: password);
       return true;
     } on FirebaseAuthException catch (e) {
       _setError(_getErrorMessage(e));
@@ -85,73 +69,76 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  // Google Sign In (Updated for google_sign_in 7.2.0+)
+  Future<bool> resetPassword(String email) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+      await _auth.sendPasswordResetEmail(email: email);
+      return true;
+    } on FirebaseAuthException catch (e) {
+      _setError(_getErrorMessage(e));
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // -------------------------
+  // Google Sign-In
+  // -------------------------
   Future<bool> signInWithGoogle() async {
     try {
       _setLoading(true);
       _setError(null);
 
-      // Ensure Google Sign-In is initialized
-      if (!_isGoogleSignInInitialized) {
-        await _initializeGoogleSignIn();
-      }
+      // Initialize GoogleSignIn
+      await GoogleSignIn.instance.initialize(
+        serverClientId: 'YOUR_WEB_CLIENT_ID', // only pass the ID
+        // **do not** pass scopes here for v7.x
+      );
 
-      if (!_isGoogleSignInInitialized) {
-        throw Exception('Google Sign-In could not be initialized');
-      }
-
-      // Check if platform supports authenticate
-      if (GoogleSignIn.instance.supportsAuthenticate()) {
-        // Use authenticate for supported platforms
-        await GoogleSignIn.instance.authenticate(scopeHint: ['email']);
-
-        // Listen for authentication events
-        final completer = Completer<GoogleSignInAccount?>();
-        final subscription = GoogleSignIn.instance.authenticationEvents.listen(
-          (event) {
-            if (event is GoogleSignInAuthenticationEventSignIn) {
-              completer.complete(event.user);
-            } else if (event is GoogleSignInAuthenticationEventSignOut) {
-              completer.complete(null);
-            }
-          },
-        );
-
-        final googleUser = await completer.future.timeout(
-          const Duration(seconds: 30),
-          onTimeout: () => null,
-        );
-
-        subscription.cancel();
-
-        if (googleUser == null) {
-          _setLoading(false);
-          return false;
-        }
-
-        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
-        final credential = GoogleAuthProvider.credential(
-          accessToken: googleAuth.accessToken,
-          idToken: googleAuth.idToken,
-        );
-
-        await _auth.signInWithCredential(credential);
-        return true;
-      } else {
-        // Web or unsupported platform
-        _setError('Google Sign-In not supported on this platform. Please use the web interface.');
+      // Authenticate (sign-in)
+      final GoogleSignInAccount? googleUser = await GoogleSignIn.instance.authenticate();
+      if (googleUser == null) {
+        // user cancelled or failed
         return false;
       }
+
+      // Get the authentication object (basic, without access token)
+      final GoogleSignInAuthentication googleAuth = googleUser.authentication;
+      final String? idToken = googleAuth.idToken;
+      if (idToken == null) {
+        _setError('Missing Google ID token');
+        return false;
+      }
+
+      // **Request authorization for scopes to get the access token**
+      final List<String> scopes = ['email']; // or any scopes you need
+      final GoogleSignInClientAuthorization auth =
+        await googleUser.authorizationClient.authorizeScopes(scopes);
+      final String? accessToken = auth.accessToken;
+
+      // Create Firebase credential
+      final credential = GoogleAuthProvider.credential(
+        idToken: idToken,
+        accessToken: accessToken,
+      );
+
+      await _auth.signInWithCredential(credential);
+      return true;
     } catch (e) {
-      _setError('Google sign-in failed: ${e.toString()}');
+      _setError('Google sign-in failed: $e');
       return false;
     } finally {
       _setLoading(false);
     }
   }
 
-  // Apple Sign In
+
+  // -------------------------
+  // Apple Sign-In
+  // -------------------------
+
   Future<bool> signInWithApple() async {
     try {
       _setLoading(true);
@@ -172,45 +159,29 @@ class AuthProvider with ChangeNotifier {
       await _auth.signInWithCredential(oauthCredential);
       return true;
     } catch (e) {
-      _setError('Apple sign-in failed: ${e.toString()}');
+      _setError('Apple sign-in failed: $e');
       return false;
     } finally {
       _setLoading(false);
     }
   }
 
-  // Password Reset
-  Future<bool> resetPassword(String email) async {
-    try {
-      _setLoading(true);
-      _setError(null);
-
-      await _auth.sendPasswordResetEmail(email: email);
-      return true;
-    } on FirebaseAuthException catch (e) {
-      _setError(_getErrorMessage(e));
-      return false;
-    } finally {
-      _setLoading(false);
-    }
-  }
-
+  // -------------------------
   // Sign Out
+  // -------------------------
+
   Future<void> signOut() async {
     try {
-      // Sign out from Google if initialized
-      if (_isGoogleSignInInitialized) {
-        try {
-          await GoogleSignIn.instance.signOut();
-        } catch (e) {
-          debugPrint('Google Sign-Out error: $e');
-        }
-      }
+      await GoogleSignIn.instance.signOut();
       await _auth.signOut();
     } catch (e) {
-      _setError('Sign out failed: ${e.toString()}');
+      _setError('Sign out failed: $e');
     }
   }
+
+  // -------------------------
+  // Helper: FirebaseAuth error messages
+  // -------------------------
 
   String _getErrorMessage(FirebaseAuthException e) {
     switch (e.code) {
@@ -229,9 +200,5 @@ class AuthProvider with ChangeNotifier {
       default:
         return 'Authentication failed: ${e.message}';
     }
-  }
-
-  void clearError() {
-    _setError(null);
   }
 }
